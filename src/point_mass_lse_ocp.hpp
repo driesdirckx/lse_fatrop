@@ -55,8 +55,9 @@
 namespace lse_fatrop
 {
     using fatrop::Index;
-    using fatrop::MAT;
     using fatrop::Scalar;
+    // Note: MAT is a macro (-> blasfeo_dmat, a global type), not a fatrop:: name,
+    // so it is used unqualified rather than pulled in with a using-declaration.
 
     static constexpr Index NX_LSE = 4; // [px, py, vx, vy]
     static constexpr Index NU_LSE = 2; // [fx, fy]

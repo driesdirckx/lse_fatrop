@@ -11,21 +11,29 @@ endif()
 # --------------------------------------------------------------------------- #
 # Locate fatrop.
 #
-# Two supported modes (the default is the self-contained source build):
+# Two supported modes (the default is the pre-installed package):
 #
-#  (A) SOURCE BUILD (default): point FATROP_ROOT at a checkout of fatrop and we
-#      add it as a subdirectory. BLASFEO is fetched + built automatically via
-#      fatrop's WITH_BUILD_BLASFEO option, so there is nothing else to install.
+#  (A) INSTALLED PACKAGE (default): fatrop + BLASFEO were built and installed
+#      under FATROP_INSTALL_PREFIX (see README §4). We add that prefix to
+#      CMAKE_PREFIX_PATH and call find_package(blasfeo) then find_package(fatrop)
+#      (fatropConfig references the imported 'blasfeo' target, so blasfeo must be
+#      found first).
 #
-#  (B) INSTALLED PACKAGE: configure with -DUSE_INSTALLED_FATROP=ON and we call
-#      find_package(fatrop). Requires that fatrop *and* blasfeo are installed
-#      and visible to CMake (CMAKE_PREFIX_PATH).
+#  (B) SOURCE BUILD: configure with -DUSE_INSTALLED_FATROP=OFF and point
+#      FATROP_ROOT at a fatrop checkout; we add it as a subdirectory and let it
+#      fetch + build BLASFEO. Slower (compiles fatrop too) but needs no install.
 # --------------------------------------------------------------------------- #
-option(USE_INSTALLED_FATROP "Use an installed fatrop via find_package" OFF)
+option(USE_INSTALLED_FATROP "Use an installed fatrop via find_package" ON)
+set(FATROP_INSTALL_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/../fatrop/install"
+    CACHE PATH "Install prefix of fatrop + blasfeo (installed-package mode)")
 set(FATROP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../fatrop"
     CACHE PATH "Path to the fatrop source checkout (source-build mode)")
 
 if(USE_INSTALLED_FATROP)
+  set(CMAKE_PREFIX_PATH "${FATROP_INSTALL_PREFIX}" ${CMAKE_PREFIX_PATH})
+  # fatropConfig.cmake references the imported 'blasfeo' target without a
+  # find_dependency(), so blasfeo must be discovered first.
+  find_package(blasfeo REQUIRED)
   find_package(fatrop REQUIRED)
 else()
   if(NOT EXISTS "${FATROP_ROOT}/CMakeLists.txt")
@@ -38,6 +46,11 @@ else()
   set(BUILD_TESTS            OFF CACHE BOOL "" FORCE)
   set(BUILD_EXAMPLES         OFF CACHE BOOL "" FORCE)
   set(BUILD_WITH_C_INTERFACE OFF CACHE BOOL "" FORCE)
+  # fatrop's own CMake refers to its headers via ${CMAKE_SOURCE_DIR}/include, which
+  # under add_subdirectory points at THIS project instead of fatrop. Inject the
+  # real fatrop include dir (inherited by the fatrop subdirectory targets) so its
+  # sources — and ours — can find <fatrop/...> headers.
+  include_directories(${FATROP_ROOT}/include)
   add_subdirectory(${FATROP_ROOT} ${CMAKE_BINARY_DIR}/fatrop_build)
 endif()
 

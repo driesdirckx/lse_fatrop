@@ -148,40 +148,69 @@ The solve life cycle in `main.cpp`:
 
 ### Prerequisites
 
-* A C++17 compiler (GCC ≥ 9 / Clang ≥ 10)
-* CMake ≥ 3.14
+* A C++17 compiler (tested with GCC 13.3)
+* CMake ≥ 3.14 (tested with 3.15.5)
 * A fatrop **source checkout** (the
   [v1.1.0 API](https://github.com/meco-group/fatrop) or newer, i.e. the one that
   ships `include/fatrop/ocp/ocp_abstract.hpp`)
-* Internet access on the first configure — BLASFEO is fetched and built
-  automatically by fatrop (`WITH_BUILD_BLASFEO`)
+* Internet access on the first configure — BLASFEO is fetched via CMake
+  `FetchContent`
 
-### Default (recommended): build against a fatrop source tree
+### Step 1 (default path): build & install fatrop from source
 
-By default the build expects a fatrop checkout next to this repo (`../fatrop`).
-Point `FATROP_ROOT` elsewhere if needed. fatrop and BLASFEO are compiled as part
-of the build — nothing has to be installed first.
+fatrop and BLASFEO are built once and installed into a local prefix. The build
+below assumes a fatrop checkout next to this repo (`../fatrop`) and installs into
+`../fatrop/install`.
+
+```bash
+cd ../fatrop
+cmake -S . -B build_standalone -DCMAKE_BUILD_TYPE=Release \
+      -DWITH_BUILD_BLASFEO=ON \
+      -DBUILD_EXAMPLES=OFF -DBUILD_TESTS=OFF -DBUILD_WITH_C_INTERFACE=OFF \
+      -DCMAKE_INSTALL_PREFIX=$(pwd)/install
+cmake --build build_standalone -j
+cmake --install build_standalone
+```
+
+This installs `libfatrop.so`, `libblasfeo.a`, the headers, and the
+`fatropConfig.cmake` / `blasfeoConfig.cmake` package files under
+`../fatrop/install`.
+
+### Step 2: build the examples
+
+By default the project consumes that install (`USE_INSTALLED_FATROP=ON`) and
+looks for it at `../fatrop/install`; override with `-DFATROP_INSTALL_PREFIX=...`.
+Because `fatropConfig.cmake` references the imported `blasfeo` target without a
+`find_dependency`, the CMake here calls `find_package(blasfeo)` before
+`find_package(fatrop)` for you.
 
 ```bash
 cd lse_fatrop
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release        # uses ../fatrop
-#   or, if fatrop lives elsewhere:
-# cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DFATROP_ROOT=/path/to/fatrop
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+#   or with a custom install prefix:
+# cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DFATROP_INSTALL_PREFIX=/path/to/fatrop/install
 cmake --build build -j
 ```
 
-> The first configure clones BLASFEO via CMake `FetchContent`; subsequent builds
-> are incremental.
+`libfatrop.so` lives in the install prefix; CMake bakes that directory into the
+executables' RPATH, so they run without setting `LD_LIBRARY_PATH`.
 
-### Alternative: build against an installed fatrop
+### Alternative: one-shot source build (no install step)
 
-If you already have fatrop **and** BLASFEO installed (so that
-`find_package(fatrop)` and `find_package(blasfeo)` work):
+To skip the install and build fatrop as part of this project instead, configure
+with `-DUSE_INSTALLED_FATROP=OFF` and point `FATROP_ROOT` at the checkout. This
+adds fatrop via `add_subdirectory` and fetches/builds BLASFEO inline (slower, as
+it compiles all of fatrop too):
 
 ```bash
-cmake -S . -B build -DUSE_INSTALLED_FATROP=ON -DCMAKE_PREFIX_PATH="/path/to/install"
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DUSE_INSTALLED_FATROP=OFF \
+      -DFATROP_ROOT=/path/to/fatrop
 cmake --build build -j
 ```
+
+> Note: fatrop's own `CMakeLists.txt` refers to its headers via
+> `${CMAKE_SOURCE_DIR}/include`, which is wrong under `add_subdirectory`; this
+> project injects the correct include directory to compensate.
 
 ---
 

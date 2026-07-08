@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/point_mass_obstacle.dir/src/main.cpp.o -o point_mass_obstacle  -Wl,-rpath,/home/u0110021/git_repos/fatrop/install/lib /home/u0110021/git_repos/fatrop/install/lib/libfatrop.so.1.0.0 /home/u0110021/git_repos/fatrop/install/lib/libblasfeo.a 

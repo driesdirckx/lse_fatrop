@@ -103,7 +103,7 @@ int main()
             std::cout << "k=" << std::setw(2) << k << "  p=(" << std::setw(7) << xk[0]
                       << ", " << std::setw(7) << xk[1] << ")  v=(" << std::setw(7)
                       << xk[2] << ", " << std::setw(7) << xk[3] << ")  dist=" << dist
-                      << (dist + 1e-9 < ocp->r_safe() ? "  <-- inside!" : "") << '\n';
+                      << (dist < ocp->r_safe() - 1e-6 ? "  <-- inside!" : "") << '\n';
         }
     }
     csv.close();
