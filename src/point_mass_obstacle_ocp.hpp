@@ -65,6 +65,7 @@
 
 #include <array>
 #include <limits>
+#include <vector>
 
 #include <fatrop/fatrop.hpp>
 
@@ -79,27 +80,32 @@ namespace lse_fatrop
     static constexpr Index NX = 4; // [px, py, vx, vy]
     static constexpr Index NU = 2; // [fx, fy]
 
-    /// 2D point-mass point-to-point problem with one static circular obstacle.
+    /// 2D point-mass point-to-point problem with static circular obstacles.
     ///
     /// Derives from fatrop::OcpAbstract (dynamic polymorphism). Every virtual
     /// below maps one-to-one onto a quantity fatrop needs: dimensions, function
     /// values, and the (transposed) Jacobian / Hessian blocks.
+    ///
+    /// Any number of circular obstacles is supported: each contributes one
+    /// keep-out inequality  (px-cx_o)^2 + (py-cy_o)^2 >= r_o^2  at every stage.
     class PointMassObstacleOcp : public fatrop::OcpAbstract
     {
     public:
-        /// @param K        number of stages (knot points), horizon = K-1 intervals
-        /// @param dt       integration step [s]
-        /// @param mass     point-mass [kg]
-        /// @param x_start  full start state [px,py,vx,vy]
-        /// @param x_goal   full goal  state [px,py,vx,vy]
-        /// @param obstacle [cx, cy]   obstacle centre
-        /// @param r_safe   obstacle radius + robot radius + margin (the kept distance)
+        /// @param K         number of stages (knot points), horizon = K-1 intervals
+        /// @param dt        integration step [s]
+        /// @param mass      point-mass [kg]
+        /// @param x_start   full start state [px,py,vx,vy]
+        /// @param x_goal    full goal  state [px,py,vx,vy]
+        /// @param obstacles list of [cx, cy] obstacle centres
+        /// @param radii     kept distance per obstacle (radius + robot + margin)
         PointMassObstacleOcp(Index K, Scalar dt, Scalar mass,
                              const std::array<Scalar, NX> &x_start,
                              const std::array<Scalar, NX> &x_goal,
-                             const std::array<Scalar, 2> &obstacle, Scalar r_safe)
+                             const std::vector<std::array<Scalar, 2>> &obstacles,
+                             const std::vector<Scalar> &radii)
             : K_(K), dt_(dt), m_(mass), x_start_(x_start), x_goal_(x_goal),
-              cx_(obstacle[0]), cy_(obstacle[1]), r_safe_(r_safe)
+              obstacles_(obstacles), radii_(radii),
+              n_obs_(static_cast<Index>(obstacles.size()))
         {
         }
 
@@ -120,8 +126,8 @@ namespace lse_fatrop
             return 0;
         }
 
-        // One obstacle inequality at every stage.
-        Index get_ng_ineq(const Index /*k*/) const override { return 1; }
+        // One obstacle inequality per obstacle, at every stage.
+        Index get_ng_ineq(const Index /*k*/) const override { return n_obs_; }
 
         // --- dynamics ------------------------------------------------------------
 
@@ -208,11 +214,14 @@ namespace lse_fatrop
             if (nu > 0)
                 fatrop::blasfeo_diare_wrap(NU, 2.0 * objective_scale[0], res, 0, 0);
 
-            // obstacle curvature: add lam_ineq * 2 on the px and py diagonal entries.
-            // px is local index (nu + 0), py is (nu + 1).
-            const Scalar lam = lam_eq_ineq_k[0];
-            fatrop::blasfeo_matel_wrap(res, nu + 0, nu + 0) += 2.0 * lam;
-            fatrop::blasfeo_matel_wrap(res, nu + 1, nu + 1) += 2.0 * lam;
+            // obstacle curvature: each obstacle o has g_o = (px-cx_o)^2+(py-cy_o)^2
+            // with Hessian 2*I on (px,py), so it adds lam_ineq[o] * 2 on the px and
+            // py diagonal entries. px is local index (nu + 0), py is (nu + 1).
+            Scalar lam_sum = 0.0;
+            for (Index o = 0; o < n_obs_; ++o)
+                lam_sum += lam_eq_ineq_k[o];
+            fatrop::blasfeo_matel_wrap(res, nu + 0, nu + 0) += 2.0 * lam_sum;
+            fatrop::blasfeo_matel_wrap(res, nu + 1, nu + 1) += 2.0 * lam_sum;
             return 0;
         }
 
@@ -245,34 +254,43 @@ namespace lse_fatrop
 
         // --- inequality constraint (obstacle) ------------------------------------
 
-        // g_ineq value:  (px-cx)^2 + (py-cy)^2.
+        // g_ineq value:  res[o] = (px-cx_o)^2 + (py-cy_o)^2 for each obstacle o.
         Index eval_gineq(const Scalar * /*inputs_k*/, const Scalar *states_k, Scalar *res,
                          const Index /*k*/) override
         {
-            const Scalar dx = states_k[0] - cx_;
-            const Scalar dy = states_k[1] - cy_;
-            res[0] = dx * dx + dy * dy;
+            for (Index o = 0; o < n_obs_; ++o)
+            {
+                const Scalar dx = states_k[0] - obstacles_[o][0];
+                const Scalar dy = states_k[1] - obstacles_[o][1];
+                res[o] = dx * dx + dy * dy;
+            }
             return 0;
         }
 
-        // g_ineq Jacobian (transposed). Nonzero only w.r.t. px, py:
-        //   d g / d px = 2 (px - cx),  d g / d py = 2 (py - cy).
-        // Placed in the state block (row offset nu), single column 0.
+        // g_ineq Jacobian (transposed). Each obstacle is one column; nonzero only
+        // w.r.t. px, py:  d g_o / d px = 2 (px - cx_o),  d g_o / d py = 2 (py - cy_o).
+        // Placed in the state block (row offset nu), one column per obstacle.
         Index eval_Ggt_ineq(const Scalar * /*inputs_k*/, const Scalar *states_k, MAT *res,
                             const Index k) override
         {
             fatrop::blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
             const Index nu = get_nu(k);
-            fatrop::blasfeo_matel_wrap(res, nu + 0, 0) = 2.0 * (states_k[0] - cx_);
-            fatrop::blasfeo_matel_wrap(res, nu + 1, 0) = 2.0 * (states_k[1] - cy_);
+            for (Index o = 0; o < n_obs_; ++o)
+            {
+                fatrop::blasfeo_matel_wrap(res, nu + 0, o) = 2.0 * (states_k[0] - obstacles_[o][0]);
+                fatrop::blasfeo_matel_wrap(res, nu + 1, o) = 2.0 * (states_k[1] - obstacles_[o][1]);
+            }
             return 0;
         }
 
-        // Bounds on g_ineq:  r_safe^2 <= g_ineq <= +inf.
+        // Bounds on g_ineq:  r_o^2 <= g_ineq[o] <= +inf.
         Index get_bounds(Scalar *lower, Scalar *upper, const Index /*k*/) const override
         {
-            lower[0] = r_safe_ * r_safe_;
-            upper[0] = std::numeric_limits<Scalar>::infinity(); // one-sided
+            for (Index o = 0; o < n_obs_; ++o)
+            {
+                lower[o] = radii_[o] * radii_[o];
+                upper[o] = std::numeric_limits<Scalar>::infinity(); // one-sided
+            }
             return 0;
         }
 
@@ -301,9 +319,10 @@ namespace lse_fatrop
         // --- accessors used by the driver for reporting --------------------------
         Index K() const { return K_; }
         Scalar dt() const { return dt_; }
-        Scalar cx() const { return cx_; }
-        Scalar cy() const { return cy_; }
-        Scalar r_safe() const { return r_safe_; }
+        Index n_obs() const { return n_obs_; }
+        Scalar cx(const Index o) const { return obstacles_[o][0]; }
+        Scalar cy(const Index o) const { return obstacles_[o][1]; }
+        Scalar r_safe(const Index o) const { return radii_[o]; }
 
     private:
         const Index K_;
@@ -311,9 +330,9 @@ namespace lse_fatrop
         const Scalar m_;
         const std::array<Scalar, NX> x_start_;
         const std::array<Scalar, NX> x_goal_;
-        const Scalar cx_;
-        const Scalar cy_;
-        const Scalar r_safe_;
+        const std::vector<std::array<Scalar, 2>> obstacles_;
+        const std::vector<Scalar> radii_;
+        const Index n_obs_;
     };
 
 } // namespace lse_fatrop

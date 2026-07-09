@@ -2,10 +2,10 @@
 // point_mass_lse_ocp.hpp
 //
 // Point-mass point-to-point OCP whose obstacle-avoidance constraint is a
-// Log-Sum-Exp (LSE) smooth-max of half-plane distances — the same smoothing
-// used in embeddedcbf/lse_cbf_mpc_fatrop.py, but with the constraint value,
-// Jacobian and Hessian all assembled from the *analytical* LSE derivatives in
-// lse.hpp. No CasADi graph is involved for the constraint.
+// Log-Sum-Exp (LSE) smooth-min of per-obstacle signed distances — the same
+// smoothing used in embeddedcbf/lse_cbf_mpc_fatrop.py, but with the constraint
+// value, Jacobian and Hessian all assembled from the *analytical* LSE
+// derivatives in lse.hpp. No CasADi graph is involved for the constraint.
 //
 // Dynamics / cost are identical to point_mass_obstacle_ocp.hpp (a holonomic 2D
 // double integrator, minimum control effort). Only the inequality constraint
@@ -13,31 +13,31 @@
 //
 // Obstacle constraint ---------------------------------------------------------
 //
-//   A convex polygonal obstacle is the set  { p : A_l . p <= b_l  for all l }.
-//   The signed "outside" amount for half-plane l is
+//   There are n_e circular obstacles. For obstacle l the signed "outside" amount
+//   (matching casadi_opti_reference.py) is the squared-distance slack
 //
-//       e_l(p) = A_l . p - b_l            (e_l > 0  <=>  p is outside half-plane l)
+//       e_l(p) = (px - cx_l)^2 + (py - cy_l)^2 - r_l^2      (e_l >= 0 <=> outside l)
 //
-//   The point is collision-free iff it is outside at least one half-plane, i.e.
-//   max_l e_l(p) >= 0. We smooth that max with the LSE smooth_max and keep a
+//   The point is collision-free iff it is outside *every* obstacle, i.e.
+//   min_l e_l(p) >= 0. We smooth that min with the LSE smooth_min and keep a
 //   margin:
 //
-//       g_ineq(p) = smooth_max(e(p), alpha) >= margin
+//       g_ineq(p) = smooth_min(e(p), alpha) >= margin
 //
-//   (As in the reference code, alpha = log(n_e)/max_approx controls sharpness;
-//   larger alpha -> tighter approximation of the true max, stiffer Hessian.)
+//   Because smooth_min <= min, this is the *conservative* side of the keep-out
+//   (it under-estimates the true clearance), so enforcing it keeps the point
+//   strictly outside all obstacles. Larger alpha -> tighter approximation of the
+//   true min, stiffer Hessian.
 //
-// Note on conservativeness: smooth_max >= max, so this is the *relaxed* side of
-// the keep-out (it can allow a sliver of penetration ~ (1/alpha) log n_e). To be
-// strictly conservative for a keep-IN constraint use smooth_min instead (see the
-// README); the analytical pieces for both live in lse.hpp.
+// Chain rule (e is now *quadratic* in p, so the second-order e-term stays!) ----
 //
-// Chain rule (e is affine in p, so the second-order e-term vanishes) ----------
-//
-//   With z = (u_k, x_k) and J = de/dz (rows = A_l in the px,py columns, else 0):
-//     grad_z g = J^T p                       (p = softmax(alpha e), from lse.hpp)
-//     hess_z g = J^T [alpha(diag(p)-pp^T)] J
-//   The Lagrangian Hessian then gets  lam_ineq * hess_z g  added in eval_RSQrqt.
+//   With z = (u_k, x_k) and J = de/dz (row l is [2(px-cx_l), 2(py-cy_l)] in the
+//   px,py columns, else 0), and q = softmax(-alpha e) = d smooth_min / d e:
+//     grad_z g = J^T q
+//     hess_z g = J^T [hess_e] J  +  sum_l q_l * d^2 e_l / dz^2
+//   where hess_e = -alpha(diag(q)-qq^T) (lse::smooth_min_hess_e) and each
+//   d^2 e_l/dz^2 = 2*I on (px,py). Since sum_l q_l = 1 the second term is just
+//   2*I on the (px,py) diagonal. The Lagrangian Hessian gets lam_ineq * hess_z g.
 //
 
 #ifndef LSE_FATROP_POINT_MASS_LSE_OCP_HPP
@@ -62,7 +62,7 @@ namespace lse_fatrop
     static constexpr Index NX_LSE = 4; // [px, py, vx, vy]
     static constexpr Index NU_LSE = 2; // [fx, fy]
 
-    /// 2D point-mass p2p problem with an LSE-smoothed convex-polygon obstacle.
+    /// 2D point-mass p2p problem with an LSE-smoothed multi-circle obstacle.
     class PointMassLseOcp : public fatrop::OcpAbstract
     {
     public:
@@ -71,18 +71,18 @@ namespace lse_fatrop
         /// @param mass      point-mass [kg]
         /// @param x_start   start state [px,py,vx,vy]
         /// @param x_goal    goal  state [px,py,vx,vy]
-        /// @param obs_A     obstacle half-plane normals, row-major (n_e x 2)
-        /// @param obs_b     obstacle half-plane offsets   (n_e)
-        /// @param alpha     LSE sharpness (e.g. log(n_e)/max_approx)
-        /// @param margin    required smooth_max value (keep-out margin)
+        /// @param centres   obstacle centres [cx,cy] (n_e of them)
+        /// @param radii     obstacle radii            (n_e of them)
+        /// @param alpha     LSE sharpness (e.g. log(n_e)/margin)
+        /// @param margin    required smooth_min value (keep-out margin)
         PointMassLseOcp(Index K, Scalar dt, Scalar mass,
                         const std::array<Scalar, NX_LSE> &x_start,
                         const std::array<Scalar, NX_LSE> &x_goal,
-                        const std::vector<std::array<Scalar, 2>> &obs_A,
-                        const std::vector<Scalar> &obs_b, Scalar alpha, Scalar margin)
-            : K_(K), dt_(dt), m_(mass), x_start_(x_start), x_goal_(x_goal), obs_A_(obs_A),
-              obs_b_(obs_b), alpha_(alpha), margin_(margin),
-              n_e_(static_cast<Index>(obs_b.size()))
+                        const std::vector<std::array<Scalar, 2>> &centres,
+                        const std::vector<Scalar> &radii, Scalar alpha, Scalar margin)
+            : K_(K), dt_(dt), m_(mass), x_start_(x_start), x_goal_(x_goal),
+              centres_(centres), radii_(radii), alpha_(alpha), margin_(margin),
+              n_e_(static_cast<Index>(radii.size()))
         {
         }
 
@@ -156,22 +156,31 @@ namespace lse_fatrop
             if (nu > 0)
                 fatrop::blasfeo_diare_wrap(NU_LSE, 2.0 * objective_scale[0], res, 0, 0);
 
-            // obstacle curvature: lam_ineq * J^T hess_e J, with e affine in (px,py).
-            // smooth_max_grad fills the softmax weights p from the e-values e(states_k).
-            Scalar p[kMaxE];
-            lse::smooth_max_grad(eval_e(states_k, p_e_), n_e_, alpha_, p);
+            // obstacle curvature: lam_ineq * ( J^T hess_e J + sum_l q_l d^2 e_l ).
+            // q = softmax(-alpha e) are the smooth_min weights (grad w.r.t. e).
+            Scalar e[kMaxE], q[kMaxE];
+            eval_e(states_k, e);
+            lse::smooth_min_grad(e, n_e_, alpha_, q);
 
-            // Contract the e-Hessian with the constant rows A_l over (px,py):
-            //   H[a][b] = sum_{i,j} A_i[a] * hess_e(i,j) * A_j[b],   a,b in {0:px, 1:py}
+            // J^T hess_e J on the (px,py) block, with J row l = [2(px-cx_l), 2(py-cy_l)].
             Scalar H[2][2] = {{0.0, 0.0}, {0.0, 0.0}};
             for (Index i = 0; i < n_e_; ++i)
+            {
+                const Scalar Ji[2] = {2.0 * (states_k[0] - centres_[i][0]),
+                                      2.0 * (states_k[1] - centres_[i][1])};
                 for (Index j = 0; j < n_e_; ++j)
                 {
-                    const Scalar he = lse::smooth_max_hess_e(p, alpha_, i, j);
+                    const Scalar he = lse::smooth_min_hess_e(q, alpha_, i, j);
+                    const Scalar Jj[2] = {2.0 * (states_k[0] - centres_[j][0]),
+                                          2.0 * (states_k[1] - centres_[j][1])};
                     for (Index a = 0; a < 2; ++a)
                         for (Index b = 0; b < 2; ++b)
-                            H[a][b] += obs_A_[i][a] * he * obs_A_[j][b];
+                            H[a][b] += Ji[a] * he * Jj[b];
                 }
+            }
+            // second-order e-term: sum_l q_l * d^2 e_l/dp^2 = 2*I (sum_l q_l = 1).
+            H[0][0] += 2.0;
+            H[1][1] += 2.0;
 
             const Scalar lam = lam_eq_ineq_k[0];
             // px is local index (nu+0), py is (nu+1).
@@ -205,27 +214,31 @@ namespace lse_fatrop
         }
 
         // --- LSE inequality constraint -------------------------------------------
-        // g_ineq = smooth_max( e(p) ),  e_l = A_l . p - b_l.
+        // g_ineq = smooth_min( e(p) ),  e_l = (px-cx_l)^2 + (py-cy_l)^2 - r_l^2.
         Index eval_gineq(const Scalar * /*inputs_k*/, const Scalar *states_k, Scalar *res,
                          const Index /*k*/) override
         {
-            res[0] = lse::smooth_max(eval_e(states_k, p_e_), n_e_, alpha_);
+            Scalar e[kMaxE];
+            eval_e(states_k, e);
+            res[0] = lse::smooth_min(e, n_e_, alpha_);
             return 0;
         }
 
-        // g_ineq Jacobian (transposed). grad_z g = J^T p, with J nonzero only in
-        // the (px,py) state rows. dg/dpx = sum_l p_l A_l[0], dg/dpy = sum_l p_l A_l[1].
+        // g_ineq Jacobian (transposed). grad_z g = J^T q, with J nonzero only in
+        // the (px,py) state rows. dg/dpx = sum_l q_l 2(px-cx_l),
+        // dg/dpy = sum_l q_l 2(py-cy_l).
         Index eval_Ggt_ineq(const Scalar * /*inputs_k*/, const Scalar *states_k, MAT *res,
                             const Index k) override
         {
             fatrop::blasfeo_gese_wrap(res->m, res->n, 0.0, res, 0, 0);
-            Scalar p[kMaxE];
-            lse::smooth_max_grad(eval_e(states_k, p_e_), n_e_, alpha_, p);
+            Scalar e[kMaxE], q[kMaxE];
+            eval_e(states_k, e);
+            lse::smooth_min_grad(e, n_e_, alpha_, q);
             Scalar dpx = 0.0, dpy = 0.0;
             for (Index l = 0; l < n_e_; ++l)
             {
-                dpx += p[l] * obs_A_[l][0];
-                dpy += p[l] * obs_A_[l][1];
+                dpx += q[l] * 2.0 * (states_k[0] - centres_[l][0]);
+                dpy += q[l] * 2.0 * (states_k[1] - centres_[l][1]);
             }
             const Index nu = get_nu(k);
             fatrop::blasfeo_matel_wrap(res, nu + 0, 0) = dpx;
@@ -233,7 +246,7 @@ namespace lse_fatrop
             return 0;
         }
 
-        // smooth_max(e) >= margin  ==>  bounds [margin, +inf].
+        // smooth_min(e) >= margin  ==>  bounds [margin, +inf].
         Index get_bounds(Scalar *lower, Scalar *upper, const Index /*k*/) const override
         {
             lower[0] = margin_;
@@ -262,29 +275,37 @@ namespace lse_fatrop
         Index K() const { return K_; }
         Scalar dt() const { return dt_; }
         Scalar margin() const { return margin_; }
-        const std::vector<std::array<Scalar, 2>> &obs_A() const { return obs_A_; }
-        const std::vector<Scalar> &obs_b() const { return obs_b_; }
         Scalar alpha() const { return alpha_; }
+        Index n_e() const { return n_e_; }
+        const std::vector<std::array<Scalar, 2>> &centres() const { return centres_; }
+        const std::vector<Scalar> &radii() const { return radii_; }
 
-        // Signed half-plane "outside" amount; >= 0 everywhere means truly collision free.
-        Scalar true_max_outside(const Scalar px, const Scalar py) const
+        // True (non-smoothed) worst-case slack: min_l e_l(p). >= 0 means the point
+        // is genuinely outside every obstacle (collision-free).
+        Scalar true_min_outside(const Scalar px, const Scalar py) const
         {
-            Scalar m = -std::numeric_limits<Scalar>::infinity();
+            Scalar m = std::numeric_limits<Scalar>::infinity();
             for (Index l = 0; l < n_e_; ++l)
-                m = std::max(m, obs_A_[l][0] * px + obs_A_[l][1] * py - obs_b_[l]);
+            {
+                const Scalar dx = px - centres_[l][0], dy = py - centres_[l][1];
+                m = std::min(m, dx * dx + dy * dy - radii_[l] * radii_[l]);
+            }
             return m;
         }
 
     private:
-        static constexpr Index kMaxE = 32; // stack-buffer cap on number of half-planes
+        static constexpr Index kMaxE = 32; // stack-buffer cap on number of obstacles
 
-        // Evaluate e_l = A_l . p - b_l into the provided buffer and return it.
+        // Evaluate e_l = (px-cx_l)^2 + (py-cy_l)^2 - r_l^2 into `buf`.
         // p = (states_k[0], states_k[1]) are (px, py).
-        const Scalar *eval_e(const Scalar *states_k, Scalar *buf) const
+        void eval_e(const Scalar *states_k, Scalar *buf) const
         {
             for (Index l = 0; l < n_e_; ++l)
-                buf[l] = obs_A_[l][0] * states_k[0] + obs_A_[l][1] * states_k[1] - obs_b_[l];
-            return buf;
+            {
+                const Scalar dx = states_k[0] - centres_[l][0];
+                const Scalar dy = states_k[1] - centres_[l][1];
+                buf[l] = dx * dx + dy * dy - radii_[l] * radii_[l];
+            }
         }
 
         const Index K_;
@@ -292,12 +313,11 @@ namespace lse_fatrop
         const Scalar m_;
         const std::array<Scalar, NX_LSE> x_start_;
         const std::array<Scalar, NX_LSE> x_goal_;
-        const std::vector<std::array<Scalar, 2>> obs_A_;
-        const std::vector<Scalar> obs_b_;
+        const std::vector<std::array<Scalar, 2>> centres_;
+        const std::vector<Scalar> radii_;
         const Scalar alpha_;
         const Scalar margin_;
         const Index n_e_;
-        mutable Scalar p_e_[kMaxE]; // scratch for e-values (single-threaded use)
     };
 
 } // namespace lse_fatrop

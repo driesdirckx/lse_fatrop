@@ -213,7 +213,10 @@ CMakeFiles/point_mass_obstacle.dir/src/main.cpp.o: \
  /usr/include/c++/13/bits/atomic_base.h \
  /usr/include/c++/13/bits/atomic_lockfree_defines.h \
  /usr/include/c++/13/backward/auto_ptr.h \
- /usr/include/c++/13/pstl/glue_memory_defs.h \
+ /usr/include/c++/13/pstl/glue_memory_defs.h /usr/include/c++/13/vector \
+ /usr/include/c++/13/bits/stl_vector.h \
+ /usr/include/c++/13/bits/stl_bvector.h \
+ /usr/include/c++/13/bits/vector.tcc \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/fatrop.hpp \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/common/options.hpp \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/context/context.hpp \
@@ -226,10 +229,7 @@ CMakeFiles/point_mass_obstacle.dir/src/main.cpp.o: \
  /usr/include/c++/13/bits/enable_special_members.h \
  /usr/include/c++/13/bits/node_handle.h \
  /usr/include/c++/13/bits/erase_if.h /usr/include/c++/13/variant \
- /usr/include/c++/13/bits/parse_numbers.h /usr/include/c++/13/vector \
- /usr/include/c++/13/bits/stl_vector.h \
- /usr/include/c++/13/bits/stl_bvector.h \
- /usr/include/c++/13/bits/vector.tcc \
+ /usr/include/c++/13/bits/parse_numbers.h \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/common/timing.hpp \
  /home/u0110021/git_repos/fatrop/install/include/blasfeo.h \
  /home/u0110021/git_repos/fatrop/install/include/blasfeo_processor_features.h \
@@ -307,4 +307,5 @@ CMakeFiles/point_mass_obstacle.dir/src/main.cpp.o: \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/dense/dims.hpp \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/dense/type.hpp \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/dense/problem_info.hpp \
+ /home/u0110021/git_repos/lse_fatrop/src/nnz_report.hpp \
  /home/u0110021/git_repos/lse_fatrop/src/point_mass_obstacle_ocp.hpp

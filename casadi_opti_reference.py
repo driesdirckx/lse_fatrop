@@ -13,7 +13,7 @@
 import casadi as ca
 
 # ---- pick which problem to solve ------------------------------------------
-USE_LSE = True   # False -> circular obstacle, True -> LSE smooth-max polygon
+USE_LSE = False   # False -> circular obstacle, True -> LSE smooth-max polygon
 
 # ---- shared problem definition (matches main.cpp / main_lse.cpp) ----------
 K = 20           # knots -> N = K-1 intervals
@@ -105,6 +105,21 @@ opti.solver("fatrop", {"structure_detection": "auto", "expand": True, 'debug': T
             {"max_iter": 40, "tol": 1e-4})
 
 sol = opti.solve()
+
+
+### Plot sparsity pattern
+J = ca.jacobian(opti.g, opti.x).sparsity()
+lag = opti.f + ca.dot(opti.lam_g, opti.g)
+H = ca.hessian(lag, opti.x)[0].sparsity()
+func_h = ca.Function('h', [opti.x, opti.lam_g], [ca.hessian(opti.f + ca.dot(opti.lam_g, opti.g), opti.x)[0]]).expand()
+print("Number of decision variables: ", opti.x.shape[0])
+print("Number of constraints: ", opti.g.shape[0])
+print("Jacobian nonzeros: ", J.nnz())
+print("Hessian nonzeros: ", H.nnz())
+print("Hessian nodes: ", func_h.n_nodes())
+
+func_j = ca.Function('j', [opti.x], [ca.jacobian(opti.g, opti.x)]).expand()
+print("Jacobian nodes: ", func_j.n_nodes())
 
 # ---- report ----------------------------------------------------------------
 name = "LSE smooth-max polygon" if USE_LSE else "circular"

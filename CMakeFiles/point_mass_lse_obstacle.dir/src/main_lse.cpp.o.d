@@ -307,5 +307,6 @@ CMakeFiles/point_mass_lse_obstacle.dir/src/main_lse.cpp.o: \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/dense/dims.hpp \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/dense/type.hpp \
  /home/u0110021/git_repos/fatrop/install/include/fatrop/dense/problem_info.hpp \
+ /home/u0110021/git_repos/lse_fatrop/src/nnz_report.hpp \
  /home/u0110021/git_repos/lse_fatrop/src/point_mass_lse_ocp.hpp \
  /home/u0110021/git_repos/lse_fatrop/src/lse.hpp
